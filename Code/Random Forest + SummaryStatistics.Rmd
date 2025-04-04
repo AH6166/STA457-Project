@@ -1,0 +1,338 @@
+---
+title: "project"
+author: "Yifei Xie"
+date: "2025-04-01"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# install.packages("randomForest")
+# install.packages("ggplot2")
+# install.packages("caret")
+# install.packages("readr")
+# install.packages("dplyr")
+
+# Load libraries
+library(randomForest)
+library(ggplot2)
+library(caret)
+library(readr)
+library(dplyr)
+```
+
+```{r}
+df <- read_csv("~/STA457/merged_df.csv")
+# Convert percentage to numeric
+df$Change_pct <- as.numeric(gsub("%", "", df$`Change..`))
+
+# Convert Date to Date format
+df$Date <- as.Date(df$Date)
+
+# Drop unnecessary columns
+df <- df %>%
+  select(-Year)
+df <- df %>%
+  arrange(Date) %>%
+  tidyr::fill(everything(), .direction = "downup")
+df <- na.omit(df)
+```
+
+```{r}
+
+# df %>% select(Price_Monthly_Avg, PRCP_Monthly_Avg, 
+# TAVG_Monthly_Avg,ExchangeRate, Monthly_Production) %>% summary()
+# library(ggplot2)
+# 
+# # ExchangeRate Histogram
+# ggplot(df, aes(x = ExchangeRate)) +
+#   geom_histogram(binwidth = 0.5, fill = "steelblue", color = "white") +
+#   labs(title = "Histogram of Exchange Rate",
+#        x = "Exchange Rate", y = "Frequency") +
+#   theme_minimal()
+# 
+# # Monthly_Production Histogram
+# ggplot(df, aes(x = Monthly_Production)) +
+#   geom_histogram(binwidth = 10000, fill = "lightblue", color = "white") +
+#   labs(title = "Histogram of Monthly Cocoa Production",
+#        x = "Monthly Production (tons)", y = "Frequency") +
+#   theme_minimal()
+
+
+```
+```{r}
+library(ggplot2)
+
+ggplot(df, aes(x = Date)) +
+  geom_line(aes(y = Price_Monthly_Avg, 
+                color = "Cocoa Price")) +
+  geom_line(aes(y = ExchangeRate * 100, 
+                color = "Exchange Rate (scaled x100)")) +
+  labs(
+    title = "Trend of Cocoa Price and Exchange Rate Over Time",
+    x = "Date",
+    y = "Value",
+    color = "Variable"
+  ) +
+  scale_color_manual(
+    values = c("Cocoa Price" = "darkblue", "Exchange Rate (scaled x100)" = "darkred")
+  ) +
+  theme_minimal()
+
+
+library(ggplot2)
+
+ggplot(df, aes(x = Date)) +
+  geom_line(aes(y = Price_Monthly_Avg, color = "Cocoa Price")) +
+  geom_line(aes(y = Monthly_Production / 100, 
+                color = "Monthly Production (scaled ÷100)")) +  # MATCH HERE
+  labs(
+    title = "Cocoa Price vs Monthly Production Over Time",
+    x = "Date",
+    y = "Value",
+    color = "Variable"
+  ) +
+  scale_color_manual(
+    values = c("Cocoa Price" = "forestgreen", 
+               "Monthly Production (scaled ÷100)" = "orange")  
+  ) +
+  theme_minimal()
+
+
+```
+```{r}
+# Define target and features
+y <- df$Price_Monthly_Avg
+X <- df %>% select(-Price_Monthly_Avg, -Date, 
+                   -ExchangeRate, -Monthly_Production, 
+                   -TAVG_Monthly_Avg,
+                   -PRCP_Monthly_Avg,-Change..)
+set.seed(42)
+control <- trainControl(method = "cv", number = 5)
+
+# Train model
+model <- train(
+  x = X,
+  y = y,
+  method = "rf",
+  trControl = control,
+  importance = TRUE
+)
+
+# View performance
+print(model)
+
+```
+
+
+```{r}
+
+y <- df$Price_Monthly_Avg
+X <- df %>% select(-Price_Monthly_Avg, -Date,
+                   -ExchangeRate, -Monthly_Production, 
+                   -TAVG_Monthly_Avg,-PRCP_Monthly_Avg,-Change..)
+
+# Assume df contains a column Cocoa_Price and Date
+df <- df %>%
+  arrange(Date) %>%
+  mutate(
+    Cocoa_Lag1 = lag(Price_Monthly_Avg, 1),
+    Cocoa_Lag2 = lag(Price_Monthly_Avg, 2),
+    Cocoa_Lag3 = lag(Price_Monthly_Avg, 3)
+  )
+df <- na.omit(df)
+
+
+split_date <- as.Date("2024-08-31")
+train <- df %>% filter(Date < split_date)
+test <- df %>% filter(Date >= split_date)
+
+
+X_train <- train %>% select(Cocoa_Lag1, Cocoa_Lag2, 
+                            Cocoa_Lag3,ExchangeRate, 
+                            Monthly_Production, TAVG_Monthly_Avg)
+y_train <- train$Price_Monthly_Avg
+X_test <- test %>% select(Cocoa_Lag1, Cocoa_Lag2, 
+                          Cocoa_Lag3, ExchangeRate, 
+                          Monthly_Production, TAVG_Monthly_Avg)
+y_test <- test$Price_Monthly_Avg
+
+
+library(randomForest)
+
+set.seed(42)
+model <- randomForest(x = X_train, y = y_train, ntree = 500)
+pred_test <- predict(model, newdata = X_test)
+
+# Evaluate performance
+#install.packages('Metrics')
+library(Metrics)
+rmse <- rmse(y_test, pred_test)
+r2 <- 1 - sum((y_test - pred_test)^2) / sum((y_test - mean(y_test))^2)
+mae <- mae(y_test, pred_test)
+mape <- mape(y_test, pred_test) * 100 
+
+cat("RMSE:", rmse, "\n")
+cat("R²:", r2, "\n")
+cat("MAE:", mae, "\n")
+cat("MAPE:", round(mape, 2), "%\n")
+
+
+library(ggplot2)
+
+plot_df <- data.frame(
+  Date = test$Date,
+  Actual = y_test,
+  Predicted = pred_test
+)
+
+ggplot(plot_df, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual")) +
+  geom_line(aes(y = Predicted, color = "Predicted")) +
+  labs(title = "Cocoa Price Forecast",
+       y = "Cocoa Price",
+       x = "Date") +
+  scale_color_manual(values = c("Actual" = "red", "Predicted" = "blue")) +
+  theme_minimal()
+```
+```{r}
+n_ahead <- 6
+
+# Create a copy of the last row from the test set to start forecasting
+last_known <- tail(df, 1)
+
+future_forecasts <- c()
+future_dates <- seq.Date(from = last_known$Date + months(1), by = "month", length.out = n_ahead)
+
+for (i in 1:n_ahead) {
+  # Create a new row based on last known data
+  new_row <- last_known
+  
+  # Shift lags forward
+  new_row$Cocoa_Lag3 <- new_row$Cocoa_Lag2
+  new_row$Cocoa_Lag2 <- new_row$Cocoa_Lag1
+  new_row$Cocoa_Lag1 <- last_known$Price_Monthly_Avg
+  
+  # Prepare predictors
+  predictors <- new_row %>%
+    select(Cocoa_Lag1, Cocoa_Lag2, Cocoa_Lag3, ExchangeRate, Monthly_Production, TAVG_Monthly_Avg)
+  
+  # Predict
+  prediction <- predict(model, newdata = predictors)
+  future_forecasts <- c(future_forecasts, prediction)
+  
+  # Update last_known for next iteration
+  last_known$Price_Monthly_Avg <- prediction
+}
+
+# Combine actual and forecasted data
+plot_df <- df %>%
+  filter(Date >= as.Date("2020-01-01")) %>%
+  select(Date, Actual = Price_Monthly_Avg)
+
+future_df <- data.frame(
+  Date = future_dates,
+  Forecasted = future_forecasts
+)
+
+# Plot
+ggplot() +
+  geom_line(data = plot_df, aes(x = Date, y = Actual, color = "Actual")) +
+  geom_line(data = future_df, aes(x = Date, y = Forecasted, color = "Forecasted")) +
+  labs(title = "Random Forest Forecast of Cocoa Prices (Next 6 Months)",
+       x = "Date",
+       y = "Cocoa Price",
+       color = "Legend") +
+  scale_color_manual(values = c("Actual" = "blue", "Forecasted" = "red")) +
+  theme_minimal()
+
+```
+```{r}
+
+price_ts <- ts(y_test, start = c(2018, 12), frequency = 12)
+price_forecast <- ts(pred_test, start = c(2018, 12), frequency = 12)
+
+
+combined_ts <- ts(c(price_ts, price_forecast),
+                  start = start(price_ts),
+                  frequency = 12)
+
+plot_window_start <- c(2018, 1)
+
+
+
+plot(window(price_forecast, start = plot_window_start),
+     col = "blue", lwd = 2,
+     main = "Forecasted vs Actual Prices by Random Forest",
+     ylab = "Price", xlab = "Year",
+     xlim = c(2018, 2025),        
+     ylim = c(1000, 6000))       
+
+
+
+lines(window(price_ts, start = plot_window_start), col = "red", lwd = 2)
+
+
+legend("topleft", legend = c("Forecast", "Actual"),
+       col = c("blue", "red"), lty = 1, lwd = 2)
+
+```
+
+```{r}
+X_train <- train %>% select(Cocoa_Lag1, Cocoa_Lag2,
+                            ExchangeRate, 
+                            Monthly_Production, TAVG_Monthly_Avg)
+y_train <- train$Price_Monthly_Avg
+X_test <- test %>% select(Cocoa_Lag1, Cocoa_Lag2, 
+                          ExchangeRate, Monthly_Production, 
+                          TAVG_Monthly_Avg)
+y_test <- test$Price_Monthly_Avg
+
+set.seed(42)
+model <- randomForest(x = X_train, y = y_train, ntree = 500)
+pred_test <- predict(model, newdata = X_test)
+
+rmse <- rmse(y_test, pred_test)
+r2 <- 1 - sum((y_test - pred_test)^2) / sum((y_test - mean(y_test))^2)
+mae <- mae(y_test, pred_test)
+mape <- mape(y_test, pred_test) * 100 
+
+cat("RMSE:", rmse, "\n")
+cat("R²:", r2, "\n")
+cat("MAE:", mae, "\n")
+cat("MAPE:", round(mape, 2), "%\n")
+
+```
+```{r}
+X_train <- train %>% select(Cocoa_Lag1, Cocoa_Lag2,
+                            ExchangeRate, Monthly_Production)
+y_train <- train$Price_Monthly_Avg
+X_test <- test %>% select(Cocoa_Lag1, Cocoa_Lag2, 
+                          ExchangeRate, Monthly_Production )
+y_test <- test$Price_Monthly_Avg
+
+set.seed(42)
+model <- randomForest(x = X_train, y = y_train, ntree = 500)
+pred_test <- predict(model, newdata = X_test)
+
+rmse <- rmse(y_test, pred_test)
+r2 <- 1 - sum((y_test - pred_test)^2) / sum((y_test - mean(y_test))^2)
+mae <- mae(y_test, pred_test)
+mape <- mape(y_test, pred_test) * 100 
+
+cat("RMSE:", rmse, "\n")
+cat("R²:", r2, "\n")
+cat("MAE:", mae, "\n")
+cat("MAPE:", round(mape, 2), "%\n")
+```
+
+```
+
+
+
+
