@@ -1,0 +1,115 @@
+---
+title: "STA457 Final Project - ETS Model"
+author: Andrew Hu
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(forecast)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(urca)
+library(tseries)
+library(zoo)
+```
+
+```{r}
+cocoa_data <- read.csv("merged_df.csv")
+cocoa_data$Date <- as.Date(cocoa_data$Date)
+
+cocoa_data <- cocoa_data %>%
+  mutate(across(everything(), ~replace_na(., 0))) %>%
+  mutate(log_price = log(Price_Monthly_Avg),
+         diff_log_price = c(NA, diff(log_price)))
+```
+
+```{r}
+ggplot(cocoa_data, aes(x = Date, y = Price_Monthly_Avg)) +
+  geom_line(color = "blue") +
+  ggtitle("Monthly Average Price Over Time") +
+  xlab("Year") +
+  ylab("Monthly Avgerage Price") +
+  theme_minimal()
+```
+
+```{r}
+price_ts <- ts(cocoa_data$Price_Monthly_Avg, start = c(1994, 10), frequency = 12)
+
+# Split into training and testing
+train_ts <- window(price_ts, end = c(2024, 7))
+test_ts <- window(price_ts, start = c(2024, 8))
+
+# Fit ETS model
+ets_model <- ets(train_ts)
+summary(ets_model)
+
+forecast_ets <- forecast(ets_model, h = 4)
+
+autoplot(forecast_ets) +
+  autolayer(test_ts, series = "Actual") +
+  ggtitle("ETS Forecast vs Actual Prices") +
+  ylab("Price") +
+  xlab("Year")
+
+accuracy(forecast_ets, test_ts)
+```
+
+```{r}
+diff_log_price <- ts(cocoa_data$diff_log_price, start = c(1994, 10), frequency = 12)
+
+diff_log_train <- window(diff_log_price, end = c(2024, 7))
+diff_log_test <- window(diff_log_price, start = c(2024, 8))
+
+diff_log_ets_model <- ets(diff_log_train, model = "ZZZ")
+summary(diff_log_ets_model)
+
+diff_log_forecast <- forecast(diff_log_ets_model, h = length(diff_log_test))
+
+
+forecasted_diffs <- diff_log_forecast$mean
+
+# reconstruct & back transform
+last_log_price <- tail(window(cocoa_data$log_price, end = c(2024, 7)), 1)
+log_price_forecast <- ts(cumsum(forecasted_diffs) + last_log_price,
+                         start = time(diff_log_test)[1], frequency = 12)
+price_forecast <- exp(log_price_forecast)
+
+actual_price_test <- window(price_ts, start = time(diff_log_test)[1])
+
+# Forecast vs actual price
+plot_df <- data.frame(
+  Date = seq.Date(from = as.Date("2024-09-01"), by = "month", length.out = 4),
+  Actual = as.numeric(actual_price_test),
+  Predicted = as.numeric(price_forecast)
+)
+
+ggplot(plot_df, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual"), size = 1.2) +
+  geom_line(aes(y = Predicted, color = "Predicted"), size = 1.2) +
+  labs(title = "Cocoa Price Forecast (Back-Transformed ETS)",
+       y = "Cocoa Price",
+       x = "Date",
+       color = "") +
+  scale_color_manual(values = c("Actual" = "red", "Predicted" = "blue")) +
+  theme_minimal()
+
+accuracy(price_forecast, actual_price_test)
+```
+
+
+```{r}
+forecast_start <- c(2024, 11) #data ends at nov
+price_forecast_ts <- ts(price_forecast, start = forecast_start, frequency = 12)
+
+# forecast
+plot(price_ts, xlim = c(2020, 2025), ylim = range(c(price_ts, price_forecast_ts)),
+     main = "Cocoa Price Forecast (ETS Model)", ylab = "Price", xlab = "Year", col = "black", lwd = 2)
+lines(price_forecast_ts, col = "blue", lwd = 2)
+legend("topleft", legend = c("Historical", "Forecast"), col = c("black", "blue"), lty = 1, lwd = 2)
+```
+
